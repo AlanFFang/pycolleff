@@ -1268,11 +1268,11 @@ class LongitudinalEquilibrium:
         if big_omega is not None:
             c_omega = big_omega[0] + 1j * big_omega[1]
 
-        f_m, f_minus_m = None, None
+        f_m = None
         if k_fb != 0.0:
             zij=self.equilibrium_info["canonical_zj"]
-            f_m, f_minus_m = self._auto_calc_fb_fourier_coeffs(zij,ms)
-
+            f_m = self._auto_calc_fb_fourier_coeffs(zij,ms)
+        
         if adsyncfreq:
             B_pp = self._fill_lebedev_matrix_adsyncfreq(
                 J, psi_J, ws_J, c_omega, omegap, ps, ms, hmps, 
@@ -1288,26 +1288,18 @@ class LongitudinalEquilibrium:
         )
         return B_mm_pp
     
-    def _auto_calc_fb_fourier_coeffs(self,z_grid, ms):
-
+    def _auto_calc_fb_fourier_coeffs(self, z_grid, ms):
         nr_J = len(z_grid)
         nr_m = len(ms)
-        
-        f_m = _np.zeros((nr_m, nr_J), dtype=float)
-        
+        f_m = _np.zeros((nr_m, nr_J), dtype=complex) 
         for i in range(nr_J):
             z_orbit = _np.array(z_grid[i]) 
             zsize = z_orbit.size
-            
             if zsize == 0:
                 continue
-            
             phi = _np.linspace(0, 2 * _np.pi, zsize, endpoint=False)
-            
-            cos_matrix = _np.cos(ms[:, None] * phi[None, :])
-            
-            f_m[:, i] = _np.mean(z_orbit[None, :] * cos_matrix, axis=1)
-
+            exp_matrix = _np.exp(-1j * ms[:, None] * phi[None, :])
+            f_m[:, i] = _np.mean(z_orbit[None, :] * exp_matrix, axis=1)
         return f_m
     
     def _fill_lebedev_matrix_adsyncfreq(
@@ -1315,7 +1307,6 @@ class LongitudinalEquilibrium:
             k_fb, f_m):
         nr_ps = ps.size
         B_pp = _np.zeros((nr_ps, nr_ps), dtype=complex)
-
         alpha = self.ring.mom_comp
         sigmae2 = self.ring.espread**2
         dpsi_dJ = -ws_J * psi_J / (alpha * sigmae2 * _c)
@@ -1339,22 +1330,23 @@ class LongitudinalEquilibrium:
 
         def calc_kernel(Am, Bm_conj,J,mdpsi_dJ_div):
             itg = (Am * Bm_conj * mdpsi_dJ_div).sum(axis=0)
-            return 1j * _simps(itg, x=J)
+            return _simps(itg, x=J)
 
         fb_corr = _np.zeros((nr_ps, nr_ps), dtype=complex)
         if k_fb != 0.0:
-            s_fb = calc_kernel(f_m, f_m,J,mdpsi_dJ_div)  
-            fb_multiplier = k_fb / (1.0 - k_fb * s_fb)
+            f_minus_m  = f_m.conj()
+            s_fb = calc_kernel(f_m, f_minus_m,J,mdpsi_dJ_div)  
+            fb_multiplier = - k_fb / (1.0 + k_fb * s_fb)
             
             xi_p = _np.array([calc_kernel(hmps[:, i], f_m,J,mdpsi_dJ_div) for i in range(nr_ps)])
-            eta_p = _np.array([calc_kernel(f_m, hmps[:, i].conj(),J,mdpsi_dJ_div) for i in range(nr_ps)])
+            eta_p = _np.array([calc_kernel(f_minus_m, hmps[:, i].conj(),J,mdpsi_dJ_div) for i in range(nr_ps)])
             
             fb_corr = fb_multiplier * _np.outer(xi_p, eta_p)
 
         for ip in range(nr_ps):
             for ipp in range(nr_ps):
                 g_pp = calc_kernel(hmps[:, ip], hmps[:, ipp].conj(),J,mdpsi_dJ_div)
-                B_pp[ip, ipp] = zpp[ipp] * (g_pp + fb_corr[ip, ipp])
+                B_pp[ip, ipp] = 1j* zpp[ipp] * (g_pp + fb_corr[ip, ipp])
         I0 = self.ring.total_current
         E0 = self.ring.energy
         C0 = self.ring.circum
